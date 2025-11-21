@@ -25,18 +25,6 @@ Future Features (WIP)
 * **Ratio Analysis:** Calculates ROE, ROA, Net Margin, and Free Cash Flow.--> WIP for this step to automate ratio generation 
 * **Visualization:** Generates dual-axis charts (Revenue vs. Margins).--> WIP for this step to automate ratio generation 
 
-## Project Structure
-
-Financial-Analysis-Engine/
-├── src/
-│   ├── income_statement.py       # Extracts Income Statement
-│   ├── balance_sheet.py          # Extracts Balance Sheet
-│   ├── cashflow.py               # Extracts Cash Flow
-│   └── create_master_analysis.py # Merges data and creates charts
-├── case_studies/                 # Folder for storing output CSVs and PNGs
-├── requirements.txt              # Dependencies
-|_ XBRL_tags_Definition.txt       #Documentation 
-└── README.md                     # Documentation
 
 
 ## Project Organization
@@ -97,6 +85,24 @@ Run the scripts in this order:
 * **`{CIK}_balance_sheet.csv`**: Find this file within downloads folder
 * **`{CIK}_Cashflow_statement.csv`**: Find this file within downloads folder
 * **Feel free to start your analysis 
+
+## Project Structure
+
+1. Financial-Analysis-Engine/
+   A. src/
+     1. income_statement.py       # Extracts Income Statement
+     2. Balance_sheet.py          # Extracts Balance Sheet
+     3. Cashflow.py               # Extracts Cash Flow
+     4. create_master_analysis.py # Merges data and creates charts  (WIP) 
+  B. case_studies/                 # Folder for storing output CSVs and PNGs
+  C. requirements.txt              # Dependencies
+  D. XBRL_tags_Definition.txt       #Documentation
+  E. README.md                     # Documentation
+
+
+
+
+
 
 ---
 
