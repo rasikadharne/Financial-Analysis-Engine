@@ -25,6 +25,20 @@ Future Features (WIP)
 * **Ratio Analysis:** Calculates ROE, ROA, Net Margin, and Free Cash Flow.--> WIP for this step to automate ratio generation 
 * **Visualization:** Generates dual-axis charts (Revenue vs. Margins).--> WIP for this step to automate ratio generation 
 
+## Project Structure
+
+Financial-Analysis-Engine/
+├── src/
+│   ├── income_statement.py       # Extracts Income Statement
+│   ├── balance_sheet.py          # Extracts Balance Sheet
+│   ├── cashflow.py               # Extracts Cash Flow
+│   └── create_master_analysis.py # Merges data and creates charts
+├── case_studies/                 # Folder for storing output CSVs and PNGs
+├── requirements.txt              # Dependencies
+|_ XBRL_tags_Definition.txt       #Documentation 
+└── README.md                     # Documentation
+
+
 ## Project Organization
 * `src/`: Contains the Python source code (extractors and analysis engine).
 * `case_studies/`: Stores the output data and graphs for analyzed companies.
