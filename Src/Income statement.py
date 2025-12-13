@@ -1,11 +1,13 @@
 import requests
 import pandas as pd
 from datetime import datetime
-import re  # <-- NEW
+import re  # already imported in your code
 
-CIK = "0001045810"  #  Nvidia, Inc.
+CIK = "0000002488"  # AMD CIK ( CIK here is AMD)
 BASE_URL = "https://data.sec.gov"
-HEADERS = {"User-Agent": "Use your email address"}  # Use your email address 
+HEADERS = {"User-Agent": "Use your email address"}
+
+ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 
 def get_xbrl_data():
     url = f"{BASE_URL}/api/xbrl/companyfacts/CIK{CIK}.json"
@@ -17,11 +19,82 @@ def get_xbrl_data():
         print(f"Error: {response.status_code}")
         return {}
 
+def get_duration_days(entry):
+    start = entry.get("start")
+    end = entry.get("end")
+    if not (start and end):
+        return 0
+    try:
+        return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
+    except Exception:
+        return 0
+
+def get_entry_year(entry):
+    """
+    Standard way to get the year of a fact:
+    1. Use fy if it's a 4-digit year.
+    2. Else parse frame like CY2024 or FY2024.
+    3. Else use end-date year.
+    """
+    fy = entry.get("fy")
+    if fy and isinstance(fy, str) and fy.isdigit() and len(fy) == 4:
+        return int(fy)
+
+    frame = entry.get("frame") or ""
+    m = re.search(r"(CY|FY)(\d{4})", frame)
+    if m:
+        return int(m.group(2))
+
+    end = entry.get("end")
+    if end and len(end) >= 4:
+        try:
+            return int(end[:4])
+        except ValueError:
+            pass
+
+    return None
+
+def is_annual_fact(entry):
+    """
+    Standard way to decide if a fact is annual.
+    Works across companies that use:
+    - fp = 'FY'
+    - qtrs = 4
+    - frame like CY2024 / FY2024
+    - or annual forms with ~1-year duration
+    """
+    form = entry.get("form", "")
+    fp = (entry.get("fp") or "").upper()   # 'FY', 'Q1', 'Q2', ...
+    qtrs = entry.get("qtrs")
+    frame = entry.get("frame") or ""
+    duration_days = get_duration_days(entry)
+
+    # 1) If SEC explicitly marks it as fiscal year, trust that
+    if fp == "FY":
+        return True
+
+    # 2) If qtrs == 4, treat as annual (year-to-date)
+    try:
+        if qtrs is not None and int(qtrs) == 4:
+            return True
+    except (ValueError, TypeError):
+        pass
+
+    # 3) If frame has CY#### or FY####, treat as annual
+    if re.search(r"(CY|FY)\d{4}", frame):
+        return True
+
+    # 4) Fallback: annual form + long duration
+    if form in ANNUAL_FORMS and duration_days >= 300:
+        return True
+
+    return False
 
 def extract_income_data(xbrl_data):
     income_tags = {
         # Revenue Section
         "Revenues": ("Total Net Revenues", "USD", "Revenues"),
+        "SalesRevenueNet": ("Net Sale revenue (Legacy) ", "USD", "Revenues"), # Ignore this value if a value exists in Total Revenue' 
         "RevenueFromContractWithCustomerExcludingAssessedTax": ("Total Revenues", "USD", "Revenues"),
 
         # Cost of Revenue Section
@@ -82,7 +155,6 @@ def extract_income_data(xbrl_data):
         "WeightedAverageNumberOfDilutedSharesOutstanding": ("Weighted-Average Shares (Diluted)", "shares", "Per Share Metrics")
     }
 
-    # category -> label -> year -> value
     income_data = {
         "Revenues":{},
         "COR":{},
@@ -94,36 +166,6 @@ def extract_income_data(xbrl_data):
         "Per Share Metrics":{}
     }
 
-    # Annual-type forms
-    annual_forms = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
-
-    def get_entry_year(entry):
-        """Use fy as fiscal year; fallback to end-date year if fy missing."""
-        fy = entry.get("fy")
-        if fy is not None:
-            try:
-                return int(fy)
-            except ValueError:
-                pass
-        end = entry.get("end")
-        if end and len(end) >= 4:
-            try:
-                return int(end[:4])
-            except ValueError:
-                pass
-        return None
-
-    def get_duration_days(entry):
-        start = entry.get("start")
-        end = entry.get("end")
-        if not (start and end):
-            return 0
-        try:
-            return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
-        except Exception:
-            return 0
-
-    # Extract data for each tag
     for tag, (label, unit, category) in income_tags.items():
         if tag not in xbrl_data:
             print(f"Tag {tag} not found in XBRL data.")
@@ -136,67 +178,48 @@ def extract_income_data(xbrl_data):
             continue
 
         entries = units[unit]
-        print(f"Tag: {tag}, Label: {label}, Category: {category}, Entries for {unit}:")
-
-        # year -> best (longest-duration) annual entry
         annual_by_year = {}
 
         for entry in entries:
-            form = entry.get("form")
-            if form not in annual_forms:
+            if not is_annual_fact(entry):
                 continue
 
             year = get_entry_year(entry)
-            if year is None:
-                continue
-
-            if not (2014 <= year <= 2025):
-                continue
-
-            duration_days = get_duration_days(entry)
-
-            # Ensure we only keep annual-type periods:
-            qtrs = entry.get("qtrs")
-            if qtrs is not None:
-                try:
-                    if int(qtrs) != 4:
-                        continue  # skip quarters
-                except ValueError:
-                    # if qtrs is weird, fall back to duration check
-                    if duration_days < 300:
-                        continue
-            else:
-                # No qtrs field -> require roughly a full year
-                if duration_days < 300:
-                    continue
-
-            # Make sure the end-date year matches the fiscal year (drop re-reported CY2016 under fy=2019, etc.)
-            end = entry.get("end")
-            end_year = None
-            if end and len(end) >= 4:
-                try:
-                    end_year = int(end[:4])
-                except ValueError:
-                    pass
-
-            if end_year is not None and end_year != year:
-                # This filters out things like:
-                # start 2016-02-01, end 2017-01-29, fy=2019 (frame CY2016)
+            if year is None or not (2014 <= year <= 2025):
                 continue
 
             value = entry["val"] / 1_000_000 if unit == "USD" else entry["val"]
+            duration_days = get_duration_days(entry)
 
             prev = annual_by_year.get(year)
-            # Keep the longest-duration annual entry for that year
-            if (prev is None) or (duration_days > prev["duration_days"]):
+
+            # Simple quality score: prefer FY, then 4 qtrs, then longer duration
+            fp = (entry.get("fp") or "").upper()
+            qtrs = entry.get("qtrs")
+            try:
+                qtrs_int = int(qtrs) if qtrs is not None else 0
+            except (ValueError, TypeError):
+                qtrs_int = 0
+
+            form = entry.get("form", "")
+            score = (
+                1 if fp == "FY" else 0,
+                1 if form in ANNUAL_FORMS else 0,
+                qtrs_int,
+                duration_days
+            )
+
+            if prev is None or score > prev["score"]:
                 annual_by_year[year] = {
-                    "duration_days": duration_days,
                     "value": value,
                     "form": form,
                     "start": entry.get("start"),
                     "end": entry.get("end"),
                     "frame": entry.get("frame"),
-                    "qtrs": entry.get("qtrs")
+                    "qtrs": entry.get("qtrs"),
+                    "fp": fp,
+                    "duration_days": duration_days,
+                    "score": score,
                 }
 
         if annual_by_year:
@@ -205,16 +228,18 @@ def extract_income_data(xbrl_data):
             for year, info in sorted(annual_by_year.items()):
                 income_data[category][label][year] = info["value"]
                 print(
-                    f"  Year: {year}, Form: {info['form']}, "
+                    f"Tag: {tag}, Label: {label}, Category: {category} -> "
+                    f"Year: {year}, Form: {info['form']}, fp: {info['fp']}, "
                     f"Frame: {info['frame']}, qtrs: {info['qtrs']}, "
                     f"Start: {info['start']}, End: {info['end']}, "
                     f"Duration: {info['duration_days']} days, "
                     f"Value (millions if USD): {info['value']}"
                 )
         else:
-            print("  No annual-worthy entries found for this tag/unit in the chosen year range.")
+            print(f"  No annual entries found for tag {tag} with unit {unit} in 2014–2025.")
 
     return income_data
+
 
 def create_dataframe(income_data):
     # Collect all unique years across all categories and items
